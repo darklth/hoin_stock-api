@@ -1,12 +1,12 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, Response
 import requests
 from bs4 import BeautifulSoup
 import yfinance as yf
+import json
 
 app = Flask(__name__)
-# 한글 깨짐(유니코드 출력) 방지 설정
-app.config['JSON_AS_ASCII'] = False
 
+# 한국 주식 가격 가져오는 함수 (네이버 금융 크롤링)
 def get_korean_stock_price(ticker):
     url = f"https://finance.naver.com/item/main.naver?code={ticker}"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -18,25 +18,32 @@ def get_korean_stock_price(ticker):
     except:
         return "조회 실패"
 
+# 미국 주식 가격 가져오는 함수 (yfinance API)
 def get_us_stock_price(symbol):
     try:
         stock = yf.Ticker(symbol)
         data = stock.history(period="1d")
-        return f"{float(data['Close'].iloc[-1]):.2f}" if not data.empty else "조회 실패"
+        if not data.empty:
+            return f"{float(data['Close'].iloc[-1]):.2f}"
+        else:
+            return "조회 실패"
     except:
         return "조회 실패"
 
-@app.get("/api/stock")
+@app.route("/api/stock", methods=["GET"])
 def stock_api():
-    # name 또는 ticker 파라미터 둘 다 지원
+    # 1. 파라미터 받기 (name 또는 ticker)
     val = request.args.get("name") or request.args.get("ticker")
     
     if not val:
-        return jsonify({"error": "name 또는 ticker 파라미터가 필요합니다."})
+        result = {"error": "name 또는 ticker 파라미터가 필요합니다."}
+        return Response(json.dumps(result, ensure_ascii=False), content_type="application/json; charset=utf-8")
 
     val_upper = val.upper()
-    
-    # 종목 판별 로직
+    final_name = val
+    price = "조회 실패"
+
+    # 2. 종목 판별 로직
     if val == "삼성전자" or val == "005930":
         price = get_korean_stock_price("005930")
         final_name = "삼성전자"
@@ -50,10 +57,18 @@ def stock_api():
         price = get_us_stock_price("AAPL")
         final_name = "애플"
     else:
+        # 그 외에는 미국 티커로 간주하여 시도
         price = get_us_stock_price(val_upper)
         final_name = val
 
-    return jsonify({"name": final_name, "price": price})
+    # 3. 결과 생성
+    result = {"name": final_name, "price": price}
+    
+    # ensure_ascii=False 설정을 통해 한글이 깨지지 않게 변환합니다.
+    json_data = json.dumps(result, ensure_ascii=False)
+    
+    # Response 객체를 사용해 강제로 UTF-8 인코딩을 지정합니다.
+    return Response(json_data, content_type="application/json; charset=utf-8")
 
 if __name__ == "__main__":
     app.run()
